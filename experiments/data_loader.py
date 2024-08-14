@@ -21,7 +21,7 @@ class SampleGenerator(tf.keras.utils.Sequence):
     ):
         self.documents = [
             {
-                "celex_id": dataset["celex_id"][k],
+                #              "celex_id": dataset["celex_id"][k],
                 "text": dataset["text"][k],
                 "labels": dataset["labels"][k],
             }
@@ -54,7 +54,7 @@ class SampleGenerator(tf.keras.utils.Sequence):
         )
         y = np.zeros((len(documents), len(self.label_index)), dtype=np.float32)
         for i, document in enumerate(documents):
-            for j, concept_id in enumerate(sorted(document["labels"])):
+            for j, concept_id in enumerate(sorted([document["labels"]])):
                 if concept_id in self.label_index:
                     y[i][concept_id] = 1
         return [x, y]

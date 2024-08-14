@@ -10,9 +10,53 @@ from tensorflow.keras.metrics import MeanMetricWrapper
 from model import Classifier, NATIVE_BERT
 from experiments.data_loader import SampleGenerator
 from data import MODELS_DIR, DATA_DIR
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from utils.logger import setup_logger
 from utils.retrieval_metrics import mean_rprecision, mean_ndcg_score, mean_recall_k
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+
+def load_custom_dataset(
+    json_path="data/carboncloud_raw_customer_db.product_db.json",
+):
+    data_json = json.load(open(json_path))
+    converted_json = []
+    for dict_file in data_json:
+        dict_file["ingredient_name"].reverse()
+        converted_json.append(
+            {
+                "text": dict_file["product_name"]
+                + "\n"
+                + dict_file["product_description"]
+                + "\n"
+                + " ".join(dict_file["ingredient_name"]),
+                "labels": dict_file["category"]["category_name"],
+            }
+        )
+    dfItem = pd.DataFrame.from_records(converted_json)
+    category_int_id = pd.DataFrame(dfItem.labels.unique())
+    category_int_dict = {}
+    for index, row in category_int_id.iterrows():
+        category_int_dict.update({row[0]: index})
+    dfItem.labels = dfItem.labels.replace(category_int_dict)
+
+    with open("category_int_mapping.txt", "w") as convert_file:
+        convert_file.write(json.dumps(category_int_dict))
+    n = dfItem.__len__()
+    mask = np.random.rand(n) < 0.8
+    df_train_val = dfItem.iloc[mask, :]
+    df_test = dfItem.iloc[~mask, :]
+    mask = np.random.rand(df_train_val.__len__()) < 0.8
+    df_train = df_train_val.iloc[mask, :]
+    df_val = df_train_val.iloc[~mask, :]
+    return (
+        Dataset.from_pandas(df_train, preserve_index=False),
+        Dataset.from_pandas(df_val, preserve_index=False),
+        Dataset.from_pandas(df_test, preserve_index=False),
+        category_int_dict,
+    )
+
 
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -77,15 +121,17 @@ def train(
     if multilingual_train and not train_langs:
         train_langs = eval_langs
 
-    with open(os.path.join(DATA_DIR, "eurovoc_concepts.json")) as file:
-        label_index = {
-            idx: concept for idx, concept in enumerate(json.load(file)[label_level])
-        }
+    # with open(os.path.join(DATA_DIR, "eurovoc_concepts.json")) as file:
+    #     label_index = {
+    #         idx: concept for idx, concept in enumerate(json.load(file)[label_level])
+    #     }
 
     # Load native bert
     if native_bert in NATIVE_BERT:
         bert_path = NATIVE_BERT[native_bert]
 
+    train_dataset, val_dataset, eval_dataset, label_index = load_custom_dataset()
+    print(val_dataset)
     # Log configuration
     LOGGER.info("\n----------------------------------------")
     LOGGER.info(log_name)
@@ -131,24 +177,24 @@ def train(
     #     label_level=label_level,
     # )
 
-    train_dataset = load_dataset(
-        "multi_eurlex",
-        language="en",
-        label_level=label_level,
-        split="train",
-    )
-    eval_dataset = load_dataset(
-        "multi_eurlex",
-        language="en",
-        label_level=label_level,
-        split="test",
-    )
-    val_dataset = load_dataset(
-        "multi_eurlex",
-        language="en",
-        label_level=label_level,
-        split="validation",
-    )
+    # train_dataset = load_dataset(
+    #     "multi_eurlex",
+    #     language="en",
+    #     label_level=label_level,
+    #     split="train",
+    # )
+    # eval_dataset = load_dataset(
+    #     "multi_eurlex",
+    #     language="en",
+    #     label_level=label_level,
+    #     split="test",
+    # )
+    # val_dataset = load_dataset(
+    #     "multi_eurlex",
+    #     language="en",
+    #     label_level=label_level,
+    #     split="validation",
+    # )
 
     # Instantiate training / development generators
     LOGGER.info(f"{len(train_dataset)} documents will be used for training")
@@ -220,8 +266,9 @@ def train(
             )
         ],
     )
-    end_training_time = time.time()
 
+    end_training_time = time.time()
+    classifier.save_model(os.path.join(MODELS_DIR, LOGGER.name))
     # Log training history
     LOGGER.info(f"\n{'-' * 100}")
     LOGGER.info("Training History")
